@@ -53,11 +53,24 @@ class DBWNode(object):
         self.brake_pub = rospy.Publisher('/vehicle/brake_cmd',
                                          BrakeCmd, queue_size=1)
 
+        # Define variables:
+        self.dbw_enabled = False
+        self.target_angular_velocity = 0.
+        self.target_linear_velocity = 0.
+
+        self.current_angular_velocity = 0.
+        self.current_linear_velocity = 0.
+        
         # TODO: Create `Controller` object
         # self.controller = Controller(<Arguments you wish to provide>)
-
+        self.controller = Controller(vehicle_mass, fuel_capacity, brake_deadband, decel_limit,
+                                     accel_limit, wheel_radius, wheel_base, steer_ratio, max_lat_accel, max_steer_angle)
+        
         # TODO: Subscribe to all the topics you need to
-
+        rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_callback)
+        rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_enabled_callback)
+        rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_callback)
+        
         self.loop()
 
     def loop(self):
@@ -72,8 +85,52 @@ class DBWNode(object):
             #                                                     <any other argument you need>)
             # if <dbw is enabled>:
             #   self.publish(throttle, brake, steer)
+            
+            throttle, brake, steer = self.controller.control( self.target_angular_velocity,
+                                                                 self.target_linear_velocity,
+                                                                 self.current_angular_velocity,
+                                                                 self.current_linear_velocity,
+                                                                 self.dbw_enabled )
+            if self.dbw_enabled:
+              self.publish(throttle, brake, steer)
             rate.sleep()
+            
+    def velocity_callback(self, msg):
+        """
+        /current_velocity topic callback handler.
+        msg : geometry_msgs.msg.TwistStamped
+        Updates state:
+        - current_linear_velocity
+        - current_angular_velocity
+        """
+        self.current_linear_velocity = msg.twist.linear.x
+        self.current_angular_velocity = msg.twist.angular.z
+        pass
 
+    def dbw_enabled_callback(self, msg):
+        """
+        /vehicle/dbw_enabled topic callback handler.
+        msg: Bool indicates if the the car is under drive-by-wire control(True) or if the driver is controlling the car(False)
+        Updates state:
+        - dbw_enabled
+        """
+        rospy.loginfo('DBW_ENABLED : {}'.format(msg.data))
+        self.dbw_enabled = msg.data
+        pass
+
+    def twist_callback(self, msg):
+        """
+        /twist_cmd topic callback handler.
+        msg : geometry_msgs.msg.TwistStamped
+        Updates state:
+        - target_linear_velocity
+        - target_angular_velocity
+        """
+        self.target_linear_velocity = msg.twist.linear.x
+        self.target_angular_velocity = msg.twist.angular.z
+        pass
+            
+            
     def publish(self, throttle, brake, steer):
         tcmd = ThrottleCmd()
         tcmd.enable = True
