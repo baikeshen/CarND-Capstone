@@ -1,23 +1,22 @@
 #!/usr/bin/env python
-
+import numpy as np
 import rospy
 from geometry_msgs.msg import PoseStamped
-from styx_msgs.msg import Lane, Waypoint
+from std_msgs.msg import Int32
+from styx_msgs.msg import Lane, Waypoint, TrafficLight
+from scipy.spatial import KDTree
 
 import math
+import sys
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
-
 As mentioned in the doc, you should ideally first implement a version which does not care
 about traffic lights or obstacles.
-
 Once you have created dbw_node, you will update this node to use the status of traffic lights too.
-
 Please note that our simulator also provides the exact location of traffic lights and their
 current status in `/vehicle/traffic_lights` message. You can use this message to build this node
 as well as to verify your TL classifier.
-
 TODO (for Yousuf and Aaron): Stopline location for each traffic light.
 '''
 
@@ -46,13 +45,13 @@ class WaypointUpdater(object):
         self.waypoint_tree = None
         self.base_waypoints = None
         
-        rospy.loop()
+        self.loop()
 
-     def loop(self):
+    def loop(self):
         rate = rospy.Rate(Update_Rate)
         while not rospy.is_shutdown():
             if self.pose and self.base_lane:
-                closet_waypoint_idx = self.get_closest_waypoint_idx()
+                closest_waypoint_idx = self.get_closest_waypoint_idx()
                 self.publish_waypoints(closest_waypoint_idx)
             rate.sleep()       
 
@@ -83,9 +82,17 @@ class WaypointUpdater(object):
 
     def publish_waypoints(self, closest_idx):
         lane = Lane()
-        lane.header = self.base_waypoints.header
+        #lane.header = self.base_waypoints.header
         farthest_idx = closest_idx + LOOKAHEAD_WPS
-        lane.waypoints = self.base_lane.waypoints[closest_idx:farthest_idx]
+        base_waypoints = self.base_lane.waypoints[closest_idx:farthest_idx]
+        #lane.waypoints = self.base_lane.waypoints[closest_idx:farthest_idx]
+        npts = len(self.base_lane.waypoints)
+
+        if self.stopline_wp_idx == -1 or (self.stopline_wp_idx >= farthest_idx):
+            lane.waypoints = base_waypoints
+        else:
+            lane.waypoints = self.decelerate_waypoints(base_waypoints, closest_idx)        
+     
         
         self.final_waypoints_pub.publish(lane)
 
@@ -104,14 +111,14 @@ class WaypointUpdater(object):
             
         return lane
 
-     def decelerate_waypoints(self, waypoints, closest_idx):
+    def decelerate_waypoints(self, waypoints, closest_idx):
         dec_waypoints = []
         for i, wp in enumerate(waypoints):
 
             p = Waypoint()
             p.pose = wp.pose
 
-            stop_idx = max(self.stopline_wp_idx - closest_idx - 2, 0)
+            stop_idx = max(self.stopline_wp_idx - closest_idx - 2, 0)  # Two waypoints back from line so front of car stops at desired place
             dist = self.distance(waypoints, i, stop_idx)
             vel = math.sqrt(2 * Max_Decel * dist)
             if vel < 1.:
